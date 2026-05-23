@@ -1,0 +1,12 @@
+base_config: configs/lstm_baseline.yaml
+experiments:
+  - name: lstm_h128_len96
+    overrides: {model_type: lstm, hidden_size: 128, max_len: 96, dropout: 0.35, pooling: last}
+  - name: gru_h128_len96
+    overrides: {model_type: gru, hidden_size: 128, max_len: 96, dropout: 0.35, pooling: last}
+  - name: bilstm_h256_len96
+    overrides: {model_type: lstm, hidden_size: 256, max_len: 96, dropout: 0.45, pooling: last}
+  - name: bilstm_h128_len160
+    overrides: {model_type: lstm, hidden_size: 128, max_len: 160, dropout: 0.35, pooling: last}
+  - name: bilstm_meanmax
+    overrides: {model_type: lstm, hidden_size: 128, max_len: 128, dropout: 0.45, pooling: meanmax}

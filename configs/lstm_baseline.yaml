@@ -1,0 +1,29 @@
+seed: 42
+ag_news_path: null
+artifacts_dir: artifacts
+outputs_dir: outputs
+
+val_size: 0.1
+max_vocab_size: 50000
+min_freq: 2
+max_len: 96
+lower: true
+
+embedding_path: artifacts/text8_word2vec.model
+embedding_dim: 100
+freeze_embeddings: false
+
+model_type: lstm
+hidden_size: 128
+num_layers: 1
+bidirectional: true
+dropout: 0.35
+pooling: last
+
+batch_size: 128
+epochs: 8
+learning_rate: 0.001
+weight_decay: 0.00001
+grad_clip: 1.0
+patience: 3
+num_workers: 2
