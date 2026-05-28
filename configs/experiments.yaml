@@ -1,4 +1,10 @@
 base_config: configs/lstm_baseline.yaml
+tuning:
+  n_trials: 30
+  study_name: ag_news_optuna
+  overrides:
+    tuning_epochs: 5
+    tuning_patience: 2
 experiments:
   - name: lstm_h128_len96
     overrides: {model_type: lstm, hidden_size: 128, max_len: 96, dropout: 0.35, pooling: last}

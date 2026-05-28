@@ -5,8 +5,8 @@ import argparse
 import torch
 
 from .data import LABEL_NAMES
-from .model import RNNTextClassifier
 from .text import Vocab, tokenize
+from .train_classifier import build_classifier_model
 from .utils import get_device
 
 
@@ -24,19 +24,11 @@ def main() -> None:
     cfg = ckpt["config"]
     vocab = Vocab(stoi={w: i for i, w in enumerate(ckpt["vocab_itos"])}, itos=ckpt["vocab_itos"])
 
-    model = RNNTextClassifier(
+    model = build_classifier_model(
+        cfg=cfg,
         vocab_size=len(vocab.itos),
-        embedding_dim=int(cfg["embedding_dim"]),
-        num_classes=4,
-        hidden_size=int(cfg["hidden_size"]),
-        num_layers=int(cfg["num_layers"]),
-        model_type=str(cfg["model_type"]).lower(),
-        bidirectional=bool(cfg["bidirectional"]),
-        dropout=float(cfg["dropout"]),
+        embedding_matrix=None,
         pad_idx=vocab.pad_idx,
-        pooling=str(cfg.get("pooling", "last")),
-        embedding_weights=None,
-        freeze_embeddings=bool(cfg.get("freeze_embeddings", False)),
     ).to(device)
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()

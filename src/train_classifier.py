@@ -17,6 +17,7 @@ from tqdm import tqdm
 from .data import LABEL_NAMES, prepare_data
 from .embeddings import build_embedding_matrix
 from .model import RNNTextClassifier
+from .model_mlp import MLPTextClassifier
 from .utils import ensure_dir, get_device, load_yaml, save_json, set_seed
 
 
@@ -26,6 +27,63 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run_name", default=None)
     parser.add_argument("--ag_news_path", default=None)
     return parser.parse_args()
+
+
+def _parse_hidden_sizes(value: Any) -> list[int]:
+    if isinstance(value, int):
+        return [value]
+    if isinstance(value, str):
+        return [int(part.strip()) for part in value.split(",") if part.strip()]
+    return [int(part) for part in value]
+
+
+def _resolve_weight_decay(cfg: dict[str, Any]) -> float:
+    if "l2_reg" in cfg:
+        return float(cfg["l2_reg"])
+    return float(cfg.get("weight_decay", 0.0))
+
+
+def build_classifier_model(
+    cfg: dict[str, Any],
+    vocab_size: int,
+    embedding_matrix: np.ndarray | None,
+    pad_idx: int,
+) -> nn.Module:
+    model_type = str(cfg["model_type"]).lower()
+    common_kwargs = {
+        "vocab_size": vocab_size,
+        "embedding_dim": int(cfg["embedding_dim"]),
+        "num_classes": 4,
+        "dropout": float(cfg["dropout"]),
+        "pad_idx": pad_idx,
+        "embedding_weights": embedding_matrix,
+        "freeze_embeddings": bool(cfg.get("freeze_embeddings", False)),
+        "use_rms_norm": bool(cfg.get("use_rms_norm", False)),
+        "use_layer_norm": bool(cfg.get("use_layer_norm", False)),
+        "l2_lambda": float(cfg.get("l2_lambda", cfg.get("l2_reg", cfg.get("weight_decay", 0.0)))),
+    }
+
+    if model_type in {"lstm", "gru"}:
+        return RNNTextClassifier(
+            **common_kwargs,
+            hidden_size=int(cfg["hidden_size"]),
+            num_layers=int(cfg["num_layers"]),
+            model_type=model_type,
+            bidirectional=bool(cfg["bidirectional"]),
+            pooling=str(cfg.get("pooling", "last")),
+        )
+
+    if model_type == "mlp":
+        pooling = str(cfg.get("mlp_pooling", cfg.get("pooling", "meanmax")))
+        if pooling == "last":
+            pooling = "meanmax"
+        return MLPTextClassifier(
+            **common_kwargs,
+            hidden_sizes=_parse_hidden_sizes(cfg.get("mlp_hidden_sizes", [256, 128])),
+            pooling=pooling,
+        )
+
+    raise ValueError("model_type must be 'lstm', 'gru' or 'mlp'")
 
 
 def run_epoch(model, loader, criterion, optimizer, device, grad_clip: float | None = None):
@@ -78,7 +136,8 @@ def evaluate(model, loader, criterion, device):
 
 def train_from_config(config: dict[str, Any], run_name: str | None = None) -> dict[str, Any]:
     cfg = copy.deepcopy(config)
-    set_seed(int(cfg.get("seed", 42)))
+    seed = int(cfg.get("seed", 42))
+    set_seed(seed)
     device = get_device()
     print(f"Device: {device}")
 
@@ -92,7 +151,7 @@ def train_from_config(config: dict[str, Any], run_name: str | None = None) -> di
         min_freq=int(cfg["min_freq"]),
         max_len=int(cfg["max_len"]),
         lower=bool(cfg.get("lower", True)),
-        seed=int(cfg.get("seed", 42)),
+        seed=seed,
     )
     print(f"Train: {len(prepared.train_dataset)}, valid: {len(prepared.val_dataset)}, vocab: {len(prepared.vocab.itos)}")
 
@@ -100,15 +159,18 @@ def train_from_config(config: dict[str, Any], run_name: str | None = None) -> di
         prepared.vocab,
         cfg["embedding_path"],
         embedding_dim=int(cfg["embedding_dim"]),
-        seed=int(cfg.get("seed", 42)),
+        seed=seed,
     )
 
+    train_generator = torch.Generator()
+    train_generator.manual_seed(seed)
     train_loader = DataLoader(
         prepared.train_dataset,
         batch_size=int(cfg["batch_size"]),
         shuffle=True,
         num_workers=int(cfg.get("num_workers", 0)),
         pin_memory=torch.cuda.is_available(),
+        generator=train_generator,
     )
     val_loader = DataLoader(
         prepared.val_dataset,
@@ -118,26 +180,21 @@ def train_from_config(config: dict[str, Any], run_name: str | None = None) -> di
         pin_memory=torch.cuda.is_available(),
     )
 
-    model = RNNTextClassifier(
+    model = build_classifier_model(
+        cfg=cfg,
         vocab_size=len(prepared.vocab.itos),
-        embedding_dim=int(cfg["embedding_dim"]),
-        num_classes=4,
-        hidden_size=int(cfg["hidden_size"]),
-        num_layers=int(cfg["num_layers"]),
-        model_type=str(cfg["model_type"]).lower(),
-        bidirectional=bool(cfg["bidirectional"]),
-        dropout=float(cfg["dropout"]),
+        embedding_matrix=embedding_matrix,
         pad_idx=prepared.vocab.pad_idx,
-        pooling=str(cfg.get("pooling", "last")),
-        embedding_weights=embedding_matrix,
-        freeze_embeddings=bool(cfg.get("freeze_embeddings", False)),
     ).to(device)
 
     criterion = nn.CrossEntropyLoss()
+    weight_decay = _resolve_weight_decay(cfg)
+    cfg["weight_decay"] = weight_decay
+    cfg.setdefault("l2_reg", weight_decay)
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=float(cfg["learning_rate"]),
-        weight_decay=float(cfg.get("weight_decay", 0.0)),
+        weight_decay=weight_decay,
     )
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="max", factor=0.5, patience=1

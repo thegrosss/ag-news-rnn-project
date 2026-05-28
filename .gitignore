@@ -2,5 +2,5 @@
 /outputs
 /reports
 /scripts
-/venv
+/.venv
 /.idea
